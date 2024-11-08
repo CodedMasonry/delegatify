@@ -9,13 +9,13 @@ use tracing::{debug, info};
 #[name = "Spotify Authentication"]
 struct SpotifyAuthenticationModal {
     #[name = "Paste the code that you recieved here"]
-    #[min_length = 5]
-    #[max_length = 500]
+    #[min_length = 64]
+    #[max_length = 512]
     code: String,
 }
 
 /// Authenticates the application with specified token
-#[poise::command(slash_command)]
+#[poise::command(slash_command, owners_only)]
 pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
     let mut spotify = spotify::init().await?;
     let url = spotify.get_authorize_url(None).unwrap();
@@ -75,7 +75,8 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-#[poise::command(slash_command)]
+/// Check the current playback
+#[poise::command(slash_command, user_cooldown = 10)]
 pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
     let lock = ctx.data().spotify.read().await;
     let client = match &*lock {
@@ -94,11 +95,19 @@ pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
         }
     };
 
+    let item = match data.item {
+        Some(v) => v,
+        None => {
+            ctx.say("Nothing Playing").await?;
+            return Ok(());
+        }
+    };
+
     let reply = poise::CreateReply::default().embed(
         CreateEmbed::new()
             .color(Colour::BLUE)
             .timestamp(Timestamp::now())
-            .title(format!("{:?}", data.item)),
+            .title(format!("{:?}", item)),
     );
 
     ctx.send(reply).await?;
