@@ -452,7 +452,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "parking_lot",
  "poise",
  "reqwest 0.12.9",
  "rspotify",
