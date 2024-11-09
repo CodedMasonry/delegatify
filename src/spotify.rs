@@ -1,11 +1,12 @@
 use chrono::TimeDelta;
 use rspotify::{
     model::{FullEpisode, FullTrack, PlayableItem},
+    prelude::OAuthClient,
     scopes, AuthCodePkceSpotify, OAuth,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::Context;
+use crate::{Context, Error};
 
 pub struct StandardItem {
     pub name: String,
@@ -32,7 +33,7 @@ impl StandardItem {
     }
 }
 
-pub async fn init() -> Result<rspotify::AuthCodePkceSpotify, anyhow::Error> {
+pub async fn init() -> Result<rspotify::AuthCodePkceSpotify, Error> {
     let creds = rspotify::Credentials::from_env().expect("Credentials Not Provided");
 
     // Using every possible scope
@@ -52,6 +53,29 @@ pub async fn init() -> Result<rspotify::AuthCodePkceSpotify, anyhow::Error> {
         oauth.clone(),
         config.clone(),
     ))
+}
+
+pub async fn fetch_queue(ctx: Context<'_>) -> Result<Vec<StandardItem>, Error> {
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            return Err("Unauthorized".into());
+        }
+    };
+
+    let data = client.current_user_queue().await?.queue;
+    // Free client lock
+    drop(lock);
+
+    let mut queue = Vec::new();
+    for item in data {
+        let value = StandardItem::parse(&item).await;
+        queue.push(value);
+    }
+
+    Ok(queue)
 }
 
 pub async fn handle_track_current(track: &FullTrack) -> StandardItem {

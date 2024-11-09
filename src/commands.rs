@@ -1,4 +1,4 @@
-use crate::spotify::StandardItem;
+use crate::spotify::{fetch_queue, StandardItem};
 use crate::{format_delta, spotify, Context, Error};
 use poise::serenity_prelude::{
     self as serenity, Colour, CreateEmbed, CreateEmbedFooter, Timestamp,
@@ -108,11 +108,9 @@ pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
     // Check if something is actually playing
     let embed = match &playback.item {
         Some(item) => current_playback(&playback, item, embed).await,
-        None => {
-            ctx.say("Nothing Playing").await?;
-            return Ok(());
-        }
+        None => current_no_playback(embed).await,
     };
+
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
 }
@@ -144,8 +142,44 @@ async fn current_playback(
         .title(format!("{} - {}", item.name, item.artists.join(", ")))
         .thumbnail(item.image)
         .field("Duration", duration, false)
-        .field("Shuffle", shuffle, false)
+        .field("Shuffle", shuffle, true)
         .field("Repeat", repeat, true)
+}
+
+async fn current_no_playback(embed: CreateEmbed) -> CreateEmbed {
+    // Create Embed
+    embed
+        .color(Colour::DARK_RED)
+        .timestamp(Timestamp::now())
+        .footer(CreateEmbedFooter::new("Delegatify"))
+        .title("Nothing Playing")
+        .description("Nothing is currently being played ")
+}
+
+/// Check the queue
+#[poise::command(slash_command, user_cooldown = 10)]
+pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
+    let data = fetch_queue(ctx).await?;
+    let mut queue = Vec::new();
+    for (index, value) in data.into_iter().enumerate() {
+        queue.push(format!(
+            "[{}]({}:) []**{}** - {}",
+            value.url,
+            index,
+            value.name,
+            value.artists.join(", ")
+        ));
+    }
+
+    let embed = CreateEmbed::new()
+        .colour(Colour::DARK_GREEN)
+        .title("Current Queue")
+        .timestamp(Timestamp::now())
+        .footer(CreateEmbedFooter::new("Delegatify"))
+        .description(queue.join("\n"));
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+    Ok(())
 }
 
 /// Error 401 response for discord

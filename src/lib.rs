@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod database;
 pub mod spotify;
 
 use rspotify::AuthCodePkceSpotify;
@@ -7,6 +8,7 @@ use tokio::sync::RwLock;
 // User data, which is stored and accessible in all command invocations
 pub struct Data {
     pub spotify: RwLock<Option<AuthCodePkceSpotify>>,
+    pub pool: sqlx::PgPool,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

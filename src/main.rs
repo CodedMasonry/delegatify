@@ -3,14 +3,20 @@ use std::collections::HashSet;
 use std::env;
 
 use anyhow::Context as _;
-use delegatify::{commands::{authenticate, current}, Data};
+use delegatify::{
+    commands::{authenticate, current, queue},
+    database, Data,
+};
 use poise::serenity_prelude::{ClientBuilder, GatewayIntents, UserId};
 use shuttle_runtime::SecretStore;
 use shuttle_serenity::ShuttleSerenity;
 use tokio::sync::RwLock;
 
 #[shuttle_runtime::main]
-async fn main(#[shuttle_runtime::Secrets] secret_store: SecretStore) -> ShuttleSerenity {
+async fn main(
+    #[shuttle_runtime::Secrets] secret_store: SecretStore,
+    #[shuttle_shared_db::Postgres] pool: sqlx::PgPool,
+) -> ShuttleSerenity {
     // Discord Secrets
     let discord_token = secret_store
         .get("DISCORD_TOKEN")
@@ -37,9 +43,14 @@ async fn main(#[shuttle_runtime::Secrets] secret_store: SecretStore) -> ShuttleS
     env::set_var("RSPOTIFY_CLIENT_SECRET", client_secret.clone());
     env::set_var("RSPOTIFY_REDIRECT_URI", callback_url.clone());
 
+    // Handle migrations
+    database::migrate(&pool)
+        .await
+        .context("Failed to migrate Database")?;
+
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![authenticate(), current()],
+            commands: vec![authenticate(), current(), queue()],
             owners: HashSet::from([UserId::new(dev_user)]),
             ..Default::default()
         })
@@ -48,6 +59,7 @@ async fn main(#[shuttle_runtime::Secrets] secret_store: SecretStore) -> ShuttleS
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 Ok(Data {
                     spotify: RwLock::new(None),
+                    pool,
                 })
             })
         })
