@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 pub struct Data {
     pub spotify: RwLock<Option<AuthCodePkceSpotify>>,
     pub pool: sqlx::PgPool,
+    pub freeze: RwLock<bool>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

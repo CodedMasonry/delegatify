@@ -1,11 +1,14 @@
-use crate::spotify::{fetch_queue, StandardItem};
+use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, spotify, Context, Error};
 use poise::serenity_prelude::{
-    self as serenity, Colour, CreateEmbed, CreateEmbedFooter, Timestamp,
+    self as serenity, Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, Timestamp,
 };
 use poise::{CreateReply, Modal};
-use rspotify::model::{CurrentPlaybackContext, PlayableItem, RepeatState};
-use rspotify::prelude::OAuthClient;
+use rspotify::model::{
+    CurrentPlaybackContext, IdError, PlayableId, PlayableItem, RepeatState, SearchResult,
+    SearchType, TrackId,
+};
+use rspotify::prelude::{BaseClient, OAuthClient};
 use tracing::{debug, info};
 
 /// Modal for authentication
@@ -21,6 +24,7 @@ struct SpotifyAuthenticationModal {
 /// Authenticates the application with specified token
 #[poise::command(slash_command, owners_only)]
 pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
+    
     let mut spotify = spotify::init().await?;
     let url = spotify.get_authorize_url(None).unwrap();
 
@@ -139,9 +143,10 @@ async fn current_playback(
         .color(Colour::DARK_GREEN)
         .timestamp(Timestamp::now())
         .footer(CreateEmbedFooter::new("Delegatify"))
+        .author(CreateEmbedAuthor::new("Currenting Playing..."))
         .title(format!("{} - {}", item.name, item.artists.join(", ")))
         .thumbnail(item.image)
-        .field("Duration", duration, false)
+        .field("Time", duration, false)
         .field("Shuffle", shuffle, true)
         .field("Repeat", repeat, true)
 }
@@ -162,24 +167,183 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
     let data = fetch_queue(ctx).await?;
     let mut queue = Vec::new();
     for (index, value) in data.into_iter().enumerate() {
+        // Limit queue to 5 results
+        if index == 5 {
+            break;
+        }
+
         queue.push(format!(
-            "[{}]({}:) []**{}** - {}",
-            value.url,
-            index,
+            "**[{}]({})**\n{}",
             value.name,
-            value.artists.join(", ")
+            value.url,
+            value.artists.join(", "),
         ));
     }
 
     let embed = CreateEmbed::new()
         .colour(Colour::DARK_GREEN)
         .title("Current Queue")
+        .description("The next five songs that are in the queue.")
         .timestamp(Timestamp::now())
         .footer(CreateEmbedFooter::new("Delegatify"))
-        .description(queue.join("\n"));
+        .description(format!("{}\n**...**", queue.join("\n\n")));
 
     ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
+}
+
+/// Add a song to the queue
+#[poise::command(slash_command, user_cooldown = 30)]
+pub async fn play(
+    ctx: Context<'_>,
+    #[description = "Either the URL or search query"]
+    #[max_length = 512]
+    input: String,
+) -> Result<(), Error> {
+    if is_frozen(ctx).await {
+        ctx.say("Playback changes are frozen").await?;
+        return Ok(());
+    }
+
+    let id = if input.starts_with("https") && input.contains("track") && input.contains("spotify") {
+        play_url(&input).await?
+    } else {
+        play_search(ctx, input).await?
+    };
+
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
+
+    client
+        .add_item_to_queue(PlayableId::Track(id.clone()), None)
+        .await?;
+    drop(lock);
+
+    let track = fetch_track(ctx, id).await?;
+    let embed = CreateEmbed::new()
+        .colour(Colour::DARK_GREEN)
+        .author(CreateEmbedAuthor::new("Added Song To Queue"))
+        .title(format!("{} - {}", track.name, track.artists.join(", ")))
+        .thumbnail(track.image)
+        .field(
+            "Length",
+            format!("{}s", format_delta(track.duration)),
+            false,
+        )
+        .timestamp(Timestamp::now())
+        .footer(
+            CreateEmbedFooter::new(format!("Requested by <@{}>", ctx.author().id))
+                .icon_url(ctx.author().avatar_url().unwrap_or_default()),
+        );
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+    Ok(())
+}
+
+async fn play_url<'a>(url: &'a str) -> Result<TrackId<'a>, IdError> {
+    let id = url.split('/').last().unwrap().split('?').next().unwrap();
+    TrackId::from_id(id)
+}
+
+async fn play_search<'a>(ctx: Context<'_>, input: String) -> Result<TrackId<'a>, Error> {
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Err("Unauthorized".into());
+        }
+    };
+
+    let search_result = client
+        .search(&input, SearchType::Track, None, None, Some(1), None)
+        .await?;
+    // Free client
+    drop(lock);
+
+    let data = if let SearchResult::Tracks(page) = search_result {
+        match page.items.first() {
+            Some(item) => item.clone(),
+            None => return Err("Couldn't find a result".into()),
+        }
+    } else {
+        panic!("Not Possible")
+    };
+
+    let id = data.id.clone().unwrap();
+    let track = StandardItem::parse(&PlayableItem::Track(data)).await;
+
+    let reply = {
+        let components = vec![serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new("accept")
+                .label("Add")
+                .style(poise::serenity_prelude::ButtonStyle::Success),
+            serenity::CreateButton::new("cancel")
+                .label("Cancel")
+                .style(poise::serenity_prelude::ButtonStyle::Danger),
+        ])];
+
+        poise::CreateReply::default()
+            .embed(
+                CreateEmbed::new()
+                    .color(Colour::BLUE)
+                    .timestamp(Timestamp::now())
+                    .author(CreateEmbedAuthor::new("Want To Add This Song?"))
+                    .title(format!("{} - {}", track.name, track.artists.join(", ")))
+                    .thumbnail(track.image)
+                    .field(
+                        "Length",
+                        format!("{}s", format_delta(track.duration)),
+                        false,
+                    )
+                    .footer(CreateEmbedFooter::new("Delegatify")),
+            )
+            .components(components)
+    };
+
+    ctx.send(reply).await?;
+
+    while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
+        .timeout(std::time::Duration::from_secs(120))
+        .filter(move |mci| mci.data.custom_id == "accept" || mci.data.custom_id == "cancel")
+        .await
+    {
+        if mci.data.custom_id == "accept" {
+            return Ok(id);
+        } else {
+            return Err("Cancelled Interaction".into());
+        }
+    }
+
+    Err("Failed to handle interactions".into())
+}
+
+/// Switch the state of freeze
+#[poise::command(slash_command, owners_only)]
+pub async fn freeze(ctx: Context<'_>) -> Result<(), Error> {
+    let mut v = ctx.data().freeze.write().await;
+
+    if *v {
+        *v = false;
+        ctx.say("Disabled Freeze").await?;
+    } else {
+        *v = true;
+        ctx.say("Enabled Freeze").await?;
+    }
+
+    Ok(())
+}
+
+pub async fn is_frozen(ctx: Context<'_>) -> bool {
+    *ctx.data().freeze.read().await
 }
 
 /// Error 401 response for discord

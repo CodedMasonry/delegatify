@@ -1,7 +1,7 @@
 use chrono::TimeDelta;
 use rspotify::{
-    model::{FullEpisode, FullTrack, PlayableItem},
-    prelude::OAuthClient,
+    model::{FullEpisode, FullTrack, PlayableItem, TrackId},
+    prelude::{BaseClient, OAuthClient},
     scopes, AuthCodePkceSpotify, OAuth,
 };
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,7 @@ pub async fn init() -> Result<rspotify::AuthCodePkceSpotify, Error> {
     );
     let oauth = OAuth::from_env(scopes).unwrap();
     let config = rspotify::Config {
+        token_refreshing: true,
         ..Default::default()
     };
 
@@ -76,6 +77,24 @@ pub async fn fetch_queue(ctx: Context<'_>) -> Result<Vec<StandardItem>, Error> {
     }
 
     Ok(queue)
+}
+
+pub async fn fetch_track(ctx: Context<'_>, track: TrackId<'_>) -> Result<StandardItem, Error> {
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            return Err("Unauthorized".into());
+        }
+    };
+
+    let data = client.track(track, None).await?;
+    // Free client lock
+    drop(lock);
+
+    let data = StandardItem::parse(&PlayableItem::Track(data)).await;
+    Ok(data)
 }
 
 pub async fn handle_track_current(track: &FullTrack) -> StandardItem {
