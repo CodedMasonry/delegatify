@@ -1,6 +1,10 @@
-use crate::{spotify, Context, Error};
-use poise::serenity_prelude::{self as serenity, Colour, CreateEmbed, Timestamp};
-use poise::Modal;
+use crate::spotify::StandardItem;
+use crate::{format_delta, spotify, Context, Error};
+use poise::serenity_prelude::{
+    self as serenity, Colour, CreateEmbed, CreateEmbedFooter, Timestamp,
+};
+use poise::{CreateReply, Modal};
+use rspotify::model::{CurrentPlaybackContext, PlayableItem, RepeatState};
 use rspotify::prelude::OAuthClient;
 use tracing::{debug, info};
 
@@ -78,6 +82,7 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
 /// Check the current playback
 #[poise::command(slash_command, user_cooldown = 10)]
 pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
+    // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
     let client = match &*lock {
         Some(v) => v,
@@ -87,31 +92,60 @@ pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
         }
     };
 
-    let data = match client.current_playback(None, None::<Vec<_>>).await? {
+    // Get the playback state
+    let playback = match client.current_playback(None, None::<Vec<_>>).await? {
         Some(v) => v,
         None => {
             ctx.say("Nothing Playing").await?;
             return Ok(());
         }
     };
+    // Force drop to allow for other requests
+    drop(lock);
 
-    let item = match data.item {
-        Some(v) => v,
+    let embed = CreateEmbed::new();
+
+    // Check if something is actually playing
+    let embed = match &playback.item {
+        Some(item) => current_playback(&playback, item, embed).await,
         None => {
             ctx.say("Nothing Playing").await?;
             return Ok(());
         }
     };
-
-    let reply = poise::CreateReply::default().embed(
-        CreateEmbed::new()
-            .color(Colour::BLUE)
-            .timestamp(Timestamp::now())
-            .title(format!("{:?}", item)),
-    );
-
-    ctx.send(reply).await?;
+    ctx.send(CreateReply::default().embed(embed)).await?;
     Ok(())
+}
+
+async fn current_playback(
+    playback: &CurrentPlaybackContext,
+    item: &PlayableItem,
+    embed: CreateEmbed,
+) -> CreateEmbed {
+    let item = StandardItem::parse(item).await;
+
+    let progress = playback.progress.unwrap();
+    let duration = format!(
+        "{} / {}",
+        format_delta(progress),
+        format_delta(item.duration)
+    );
+    let shuffle = if playback.shuffle_state { "On" } else { "Off" };
+    let repeat = match playback.repeat_state {
+        RepeatState::Off => "Off",
+        RepeatState::Track => "Track",
+        RepeatState::Context => "Context",
+    };
+    // Create Embed
+    embed
+        .color(Colour::DARK_GREEN)
+        .timestamp(Timestamp::now())
+        .footer(CreateEmbedFooter::new("Delegatify"))
+        .title(format!("{} - {}", item.name, item.artists.join(", ")))
+        .thumbnail(item.image)
+        .field("Duration", duration, false)
+        .field("Shuffle", shuffle, false)
+        .field("Repeat", repeat, true)
 }
 
 /// Error 401 response for discord
