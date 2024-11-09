@@ -4,7 +4,7 @@ use std::env;
 
 use anyhow::Context as _;
 use delegatify::{
-    commands::{authenticate, current, play, queue},
+    commands::{authenticate, current, freeze, next, play, previous, queue},
     database, Data,
 };
 use poise::serenity_prelude::{ClientBuilder, GatewayIntents, UserId};
@@ -50,7 +50,15 @@ async fn main(
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![authenticate(), current(), queue(), play()],
+            commands: vec![
+                current(),
+                queue(),
+                play(),
+                previous(),
+                next(),
+                freeze(),
+                authenticate(),
+            ],
             owners: HashSet::from([UserId::new(dev_user)]),
             ..Default::default()
         })

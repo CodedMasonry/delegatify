@@ -21,3 +21,7 @@ pub fn format_delta(time: chrono::TimeDelta) -> String {
     let seconds = total_seconds % 60;
     format!("{:02}:{:02}", minutes, seconds)
 }
+
+pub async fn is_frozen(ctx: Context<'_>) -> bool {
+    *ctx.data().freeze.read().await
+}

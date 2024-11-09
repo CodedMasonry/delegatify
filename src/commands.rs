@@ -1,5 +1,5 @@
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
-use crate::{format_delta, spotify, Context, Error};
+use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
     self as serenity, Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, Timestamp,
 };
@@ -22,9 +22,8 @@ struct SpotifyAuthenticationModal {
 }
 
 /// Authenticates the application with specified token
-#[poise::command(slash_command, owners_only)]
+#[poise::command(slash_command, owners_only, category = "Utilities")]
 pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
-    
     let mut spotify = spotify::init().await?;
     let url = spotify.get_authorize_url(None).unwrap();
 
@@ -84,85 +83,13 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Check the current playback
-#[poise::command(slash_command, user_cooldown = 10)]
+#[poise::command(slash_command, user_cooldown = 10, category = "Playback")]
 pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
-    // Lock Client to get response
-    let lock = ctx.data().spotify.read().await;
-    let client = match &*lock {
-        Some(v) => v,
-        None => {
-            error_unauthorized(ctx).await?;
-            return Ok(());
-        }
-    };
-
-    // Get the playback state
-    let playback = match client.current_playback(None, None::<Vec<_>>).await? {
-        Some(v) => v,
-        None => {
-            ctx.say("Nothing Playing").await?;
-            return Ok(());
-        }
-    };
-    // Force drop to allow for other requests
-    drop(lock);
-
-    let embed = CreateEmbed::new();
-
-    // Check if something is actually playing
-    let embed = match &playback.item {
-        Some(item) => current_playback(&playback, item, embed).await,
-        None => current_no_playback(embed).await,
-    };
-
-    ctx.send(CreateReply::default().embed(embed)).await?;
-    Ok(())
-}
-
-async fn current_playback(
-    playback: &CurrentPlaybackContext,
-    item: &PlayableItem,
-    embed: CreateEmbed,
-) -> CreateEmbed {
-    let item = StandardItem::parse(item).await;
-
-    let progress = playback.progress.unwrap();
-    let duration = format!(
-        "{} / {}",
-        format_delta(progress),
-        format_delta(item.duration)
-    );
-    let shuffle = if playback.shuffle_state { "On" } else { "Off" };
-    let repeat = match playback.repeat_state {
-        RepeatState::Off => "Off",
-        RepeatState::Track => "Track",
-        RepeatState::Context => "Context",
-    };
-    // Create Embed
-    embed
-        .color(Colour::DARK_GREEN)
-        .timestamp(Timestamp::now())
-        .footer(CreateEmbedFooter::new("Delegatify"))
-        .author(CreateEmbedAuthor::new("Currenting Playing..."))
-        .title(format!("{} - {}", item.name, item.artists.join(", ")))
-        .thumbnail(item.image)
-        .field("Time", duration, false)
-        .field("Shuffle", shuffle, true)
-        .field("Repeat", repeat, true)
-}
-
-async fn current_no_playback(embed: CreateEmbed) -> CreateEmbed {
-    // Create Embed
-    embed
-        .color(Colour::DARK_RED)
-        .timestamp(Timestamp::now())
-        .footer(CreateEmbedFooter::new("Delegatify"))
-        .title("Nothing Playing")
-        .description("Nothing is currently being played ")
+    run_current(ctx).await
 }
 
 /// Check the queue
-#[poise::command(slash_command, user_cooldown = 10)]
+#[poise::command(slash_command, user_cooldown = 10, category = "Playback")]
 pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
     let data = fetch_queue(ctx).await?;
     let mut queue = Vec::new();
@@ -193,7 +120,12 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Add a song to the queue
-#[poise::command(slash_command, user_cooldown = 30)]
+#[poise::command(
+    slash_command,
+    user_cooldown = 60,
+    global_cooldown = 30,
+    category = "Playback"
+)]
 pub async fn play(
     ctx: Context<'_>,
     #[description = "Either the URL or search query"]
@@ -247,11 +179,173 @@ pub async fn play(
     Ok(())
 }
 
+/// Switch the state of freeze
+#[poise::command(slash_command, owners_only, category = "Utilities")]
+pub async fn freeze(ctx: Context<'_>) -> Result<(), Error> {
+    let mut v = ctx.data().freeze.write().await;
+
+    if *v {
+        *v = false;
+        ctx.say("Disabled Freeze").await?;
+    } else {
+        *v = true;
+        ctx.say("Enabled Freeze").await?;
+    }
+
+    Ok(())
+}
+/// Play the previous track
+#[poise::command(
+    slash_command,
+    user_cooldown = 60,
+    global_cooldown = 30,
+    category = "Playback"
+)]
+pub async fn previous(ctx: Context<'_>) -> Result<(), Error> {
+    if is_frozen(ctx).await {
+        ctx.say("Playback changes are frozen").await?;
+        return Ok(());
+    }
+
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
+
+    client.previous_track(None).await?;
+    ctx.say("Playing Previous Track").await?;
+    drop(lock);
+
+    run_current(ctx).await?;
+    Ok(())
+}
+
+/// Play the next track
+#[poise::command(
+    slash_command,
+    user_cooldown = 60,
+    global_cooldown = 30,
+    category = "Playback"
+)]
+pub async fn next(ctx: Context<'_>) -> Result<(), Error> {
+    if is_frozen(ctx).await {
+        ctx.say("Playback changes are frozen").await?;
+        return Ok(());
+    }
+
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
+
+    client.next_track(None).await?;
+    ctx.say("Playing Previous Track").await?;
+    drop(lock);
+
+    run_current(ctx).await?;
+    Ok(())
+}
+
+// Inner command of current
+async fn run_current(ctx: Context<'_>) -> Result<(), Error> {
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
+
+    // Get the playback state
+    let playback = match client.current_playback(None, None::<Vec<_>>).await? {
+        Some(v) => v,
+        None => {
+            ctx.say("Nothing Playing").await?;
+            return Ok(());
+        }
+    };
+    // Force drop to allow for other requests
+    drop(lock);
+
+    let embed = CreateEmbed::new();
+
+    // Check if something is actually playing
+    let embed = match &playback.item {
+        Some(item) => current_playback(&playback, item, embed).await,
+        None => current_no_playback(embed).await,
+    };
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+    Ok(())
+}
+
+// If there is a currently playing song
+async fn current_playback(
+    playback: &CurrentPlaybackContext,
+    item: &PlayableItem,
+    embed: CreateEmbed,
+) -> CreateEmbed {
+    let item = StandardItem::parse(item).await;
+
+    let progress = playback.progress.unwrap();
+    let duration = format!(
+        "{} / {}",
+        format_delta(progress),
+        format_delta(item.duration)
+    );
+    let shuffle = if playback.shuffle_state { "On" } else { "Off" };
+    let repeat = match playback.repeat_state {
+        RepeatState::Off => "Off",
+        RepeatState::Track => "Track",
+        RepeatState::Context => "Context",
+    };
+    // Create Embed
+    embed
+        .color(Colour::DARK_GREEN)
+        .timestamp(Timestamp::now())
+        .footer(CreateEmbedFooter::new("Delegatify"))
+        .author(CreateEmbedAuthor::new("Currenting Playing..."))
+        .title(format!("{} - {}", item.name, item.artists.join(", ")))
+        .thumbnail(item.image)
+        .field("Time", duration, false)
+        .field("Shuffle", shuffle, true)
+        .field("Repeat", repeat, true)
+}
+
+/*
+        End Commands
+*/
+
+// If there is no song playing
+async fn current_no_playback(embed: CreateEmbed) -> CreateEmbed {
+    // Create Embed
+    embed
+        .color(Colour::DARK_RED)
+        .timestamp(Timestamp::now())
+        .footer(CreateEmbedFooter::new("Delegatify"))
+        .title("Nothing Playing")
+        .description("Nothing is currently being played ")
+}
+
+// Parse a URL for TrackId
 async fn play_url<'a>(url: &'a str) -> Result<TrackId<'a>, IdError> {
     let id = url.split('/').last().unwrap().split('?').next().unwrap();
     TrackId::from_id(id)
 }
 
+// Use search to confirm song, return TrackId
 async fn play_search<'a>(ctx: Context<'_>, input: String) -> Result<TrackId<'a>, Error> {
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
@@ -324,26 +418,6 @@ async fn play_search<'a>(ctx: Context<'_>, input: String) -> Result<TrackId<'a>,
     }
 
     Err("Failed to handle interactions".into())
-}
-
-/// Switch the state of freeze
-#[poise::command(slash_command, owners_only)]
-pub async fn freeze(ctx: Context<'_>) -> Result<(), Error> {
-    let mut v = ctx.data().freeze.write().await;
-
-    if *v {
-        *v = false;
-        ctx.say("Disabled Freeze").await?;
-    } else {
-        *v = true;
-        ctx.say("Enabled Freeze").await?;
-    }
-
-    Ok(())
-}
-
-pub async fn is_frozen(ctx: Context<'_>) -> bool {
-    *ctx.data().freeze.read().await
 }
 
 /// Error 401 response for discord
