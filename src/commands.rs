@@ -395,7 +395,7 @@ async fn current_playback(
         .color(Colour::DARK_GREEN)
         .timestamp(Timestamp::now())
         .footer(CreateEmbedFooter::new("Delegatify"))
-        .author(CreateEmbedAuthor::new("Currenting Playing..."))
+        .author(CreateEmbedAuthor::new("Currently Playing..."))
         .title(format!("{} - {}", item.name, item.artists.join(", ")))
         .thumbnail(item.image)
         .field("Time", duration, false)
