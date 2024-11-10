@@ -509,7 +509,7 @@ async fn allow_playback(ctx: Context<'_>, min_level: i16) -> Result<bool, Error>
         return Ok(false);
     }
     if !is_active(ctx).await? {
-        ctx.say("Nothing Playing").await?;
+        ctx.say("Nothing Playing; can't modify playback.").await?;
         return Ok(false);
     }
     if is_owner(ctx).await {
