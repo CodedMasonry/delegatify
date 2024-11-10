@@ -98,7 +98,7 @@ pub async fn fetch_track(ctx: Context<'_>, track: TrackId<'_>) -> Result<Standar
 }
 
 pub async fn handle_track_current(track: &FullTrack) -> StandardItem {
-    let image = match track.album.images.get(0) {
+    let image = match track.album.images.get(1) {
         Some(v) => v.url.clone(),
         None => String::new(),
     };
@@ -119,7 +119,7 @@ pub async fn handle_track_current(track: &FullTrack) -> StandardItem {
 }
 
 pub async fn handle_episode_current(track: &FullEpisode) -> StandardItem {
-    let image = match track.images.get(0) {
+    let image = match track.images.get(1) {
         Some(v) => v.url.clone(),
         None => String::new(),
     };
