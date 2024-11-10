@@ -161,7 +161,6 @@ pub async fn previous(ctx: Context<'_>) -> Result<(), Error> {
     };
 
     client.previous_track(None).await?;
-    ctx.say("Playing Previous Track").await?;
     drop(lock);
 
     run_current(ctx).await?;
@@ -197,7 +196,6 @@ pub async fn next(ctx: Context<'_>) -> Result<(), Error> {
     };
 
     client.next_track(None).await?;
-    ctx.say("Playing Previous Track").await?;
     drop(lock);
 
     run_current(ctx).await?;
