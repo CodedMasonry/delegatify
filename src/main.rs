@@ -21,11 +21,6 @@ async fn main(
     let discord_token = secret_store
         .get("DISCORD_TOKEN")
         .context("'DISCORD_TOKEN' was not found")?;
-    let dev_user = secret_store
-        .get("DISCORD_DEV_ID")
-        .context("'DISCORD_DEV_ID' was not found")?
-        .parse::<u64>()
-        .context("Failed to parse Developer ID, make sure it is a valid number")?;
 
     // Spotify Secrets
     let client_id = secret_store
@@ -63,7 +58,6 @@ async fn main(
                 remove_user(),
                 authenticate(),
             ],
-            owners: HashSet::from([UserId::new(dev_user)]),
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
