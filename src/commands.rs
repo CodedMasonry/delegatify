@@ -110,10 +110,11 @@ pub async fn play(
     drop(lock);
 
     let track = fetch_track(ctx, id).await?;
+    let title = format!("{} - {}", track.name, track.artists.join(", "));
     let embed = CreateEmbed::new()
         .colour(Colour::DARK_GREEN)
         .author(CreateEmbedAuthor::new("Added Song To Queue"))
-        .title(format!("{} - {}", track.name, track.artists.join(", ")))
+        .title(title.clone())
         .thumbnail(track.image)
         .field(
             "Length",
@@ -122,11 +123,18 @@ pub async fn play(
         )
         .timestamp(Timestamp::now())
         .footer(
-            CreateEmbedFooter::new(format!("Requested by <@{}>", ctx.author().id))
+            CreateEmbedFooter::new(format!("Requested by {}", ctx.author().name))
                 .icon_url(ctx.author().avatar_url().unwrap_or_default()),
         );
 
     ctx.send(CreateReply::default().embed(embed)).await?;
+
+    // Just some logging
+    info!(
+        "{} added {} to the queue",
+        user_to_id(ctx.author().id).await,
+        title,
+    );
     Ok(())
 }
 
@@ -157,6 +165,12 @@ pub async fn previous(ctx: Context<'_>) -> Result<(), Error> {
     drop(lock);
 
     run_current(ctx).await?;
+
+    // Just some logging
+    info!(
+        "{} skipped to the next song",
+        user_to_id(ctx.author().id).await
+    );
     Ok(())
 }
 
@@ -187,6 +201,12 @@ pub async fn next(ctx: Context<'_>) -> Result<(), Error> {
     drop(lock);
 
     run_current(ctx).await?;
+
+    // Just some logging
+    info!(
+        "{} skipped to the previous song",
+        user_to_id(ctx.author().id).await
+    );
     Ok(())
 }
 
