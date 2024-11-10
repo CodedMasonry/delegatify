@@ -1,8 +1,9 @@
+use crate::database::{db_add_user, db_get_user_permission, db_remove_user, db_user_exists};
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
     self as serenity, Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter,
-    CreateInteractionResponse, Timestamp,
+    CreateInteractionResponse, Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -22,9 +23,238 @@ struct SpotifyAuthenticationModal {
     code: String,
 }
 
+/*
+
+Playback Commands
+
+*/
+
+/// Check the current playback
+#[poise::command(slash_command, user_cooldown = 10, category = "Playback")]
+pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
+    run_current(ctx).await
+}
+
+/// Check the queue
+#[poise::command(slash_command, user_cooldown = 10, category = "Playback")]
+pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
+    let data = fetch_queue(ctx).await?;
+    let mut queue = Vec::new();
+    for (index, value) in data.into_iter().enumerate() {
+        // Limit queue to 5 results
+        if index == 5 {
+            break;
+        }
+
+        queue.push(format!(
+            "**[{}]({})**\n{}",
+            value.name,
+            value.url,
+            value.artists.join(", "),
+        ));
+    }
+
+    if queue.len() == 0 {
+        ctx.say("Nothings in the queue.").await?;
+        return Ok(());
+    }
+
+    let embed = CreateEmbed::new()
+        .colour(Colour::DARK_GREEN)
+        .title("Current Queue")
+        .description("The next five songs that are in the queue.")
+        .timestamp(Timestamp::now())
+        .footer(CreateEmbedFooter::new("Delegatify"))
+        .description(format!("{}\n**...**", queue.join("\n\n")));
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+    Ok(())
+}
+
+/// Add a song to the queue
+#[poise::command(
+    slash_command,
+    user_cooldown = 60,
+    global_cooldown = 30,
+    category = "Playback"
+)]
+pub async fn play(
+    ctx: Context<'_>,
+    #[description = "Either the URL or search query"]
+    #[max_length = 512]
+    input: String,
+) -> Result<(), Error> {
+    if !allow_playback(ctx, 1).await? {
+        return Ok(());
+    }
+
+    let id = if input.starts_with("https") && input.contains("track") && input.contains("spotify") {
+        play_url(&input).await?
+    } else {
+        play_search(ctx, input).await?
+    };
+
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
+
+    client
+        .add_item_to_queue(PlayableId::Track(id.clone()), None)
+        .await?;
+    drop(lock);
+
+    let track = fetch_track(ctx, id).await?;
+    let embed = CreateEmbed::new()
+        .colour(Colour::DARK_GREEN)
+        .author(CreateEmbedAuthor::new("Added Song To Queue"))
+        .title(format!("{} - {}", track.name, track.artists.join(", ")))
+        .thumbnail(track.image)
+        .field(
+            "Length",
+            format!("{}s", format_delta(track.duration)),
+            false,
+        )
+        .timestamp(Timestamp::now())
+        .footer(
+            CreateEmbedFooter::new(format!("Requested by <@{}>", ctx.author().id))
+                .icon_url(ctx.author().avatar_url().unwrap_or_default()),
+        );
+
+    ctx.send(CreateReply::default().embed(embed)).await?;
+    Ok(())
+}
+
+/// Play the previous track
+#[poise::command(
+    slash_command,
+    user_cooldown = 60,
+    global_cooldown = 30,
+    category = "Playback"
+)]
+pub async fn previous(ctx: Context<'_>) -> Result<(), Error> {
+    if !allow_playback(ctx, 1).await? {
+        return Ok(());
+    }
+
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
+
+    client.previous_track(None).await?;
+    ctx.say("Playing Previous Track").await?;
+    drop(lock);
+
+    run_current(ctx).await?;
+    Ok(())
+}
+
+/// Play the next track
+#[poise::command(
+    slash_command,
+    user_cooldown = 60,
+    global_cooldown = 30,
+    category = "Playback"
+)]
+pub async fn next(ctx: Context<'_>) -> Result<(), Error> {
+    if !allow_playback(ctx, 1).await? {
+        return Ok(());
+    }
+
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
+
+    client.next_track(None).await?;
+    ctx.say("Playing Previous Track").await?;
+    drop(lock);
+
+    run_current(ctx).await?;
+    Ok(())
+}
+
+/*
+
+Utilities Commands
+
+*/
+
+/// Switch the state of freeze
+#[poise::command(slash_command, owners_only, category = "Utilities")]
+pub async fn freeze(ctx: Context<'_>) -> Result<(), Error> {
+    let mut v = ctx.data().freeze.write().await;
+
+    if *v {
+        *v = false;
+        ctx.say("Disabled Freeze").await?;
+    } else {
+        *v = true;
+        ctx.say("Enabled Freeze").await?;
+    }
+
+    Ok(())
+}
+
+/// Allow a user with specific permissions
+#[poise::command(slash_command, owners_only, category = "Utilities")]
+pub async fn add_user(
+    ctx: Context<'_>,
+    #[description = "Person to add"] user: serenity::User,
+    #[description = "Permission level to set for user; default to basic (1)"] level: Option<i16>,
+) -> Result<(), Error> {
+    let id = user_to_id(user.clone().id).await;
+
+    if db_user_exists(&ctx.data().pool, id).await? {
+        ctx.say("User already added").await?;
+        return Ok(());
+    }
+
+    db_add_user(&ctx.data().pool, id, level).await?;
+    ctx.say("Successfully added user").await?;
+    Ok(())
+}
+
+/// Allow a user with specific permissions
+#[poise::command(slash_command, owners_only, category = "Utilities")]
+pub async fn remove_user(
+    ctx: Context<'_>,
+    #[description = "Person to remove"] user: serenity::User,
+) -> Result<(), Error> {
+    let id = user_to_id(user.clone().id).await;
+
+    if !db_user_exists(&ctx.data().pool, id).await? {
+        ctx.say("User isn't in database").await?;
+        return Ok(());
+    }
+
+    db_remove_user(&ctx.data().pool, id).await?;
+    ctx.say("Successfully removed user").await?;
+    Ok(())
+}
+
 /// Authenticates the application with specified token
 #[poise::command(slash_command, owners_only, category = "Utilities")]
 pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
+    // Uncomment for debug
+    // poise::builtins::register_application_commands_buttons(ctx).await?;
+
     let mut spotify = spotify::init().await?;
     let url = spotify.get_authorize_url(None).unwrap();
 
@@ -83,208 +313,11 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Check the current playback
-#[poise::command(slash_command, user_cooldown = 10, category = "Playback")]
-pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
-    run_current(ctx).await
-}
-
-/// Check the queue
-#[poise::command(slash_command, user_cooldown = 10, category = "Playback")]
-pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
-    let data = fetch_queue(ctx).await?;
-    let mut queue = Vec::new();
-    for (index, value) in data.into_iter().enumerate() {
-        // Limit queue to 5 results
-        if index == 5 {
-            break;
-        }
-
-        queue.push(format!(
-            "**[{}]({})**\n{}",
-            value.name,
-            value.url,
-            value.artists.join(", "),
-        ));
-    }
-
-    if queue.len() == 0 {
-        ctx.say("Nothings in the queue.").await?;
-        return Ok(());
-    }
-
-    let embed = CreateEmbed::new()
-        .colour(Colour::DARK_GREEN)
-        .title("Current Queue")
-        .description("The next five songs that are in the queue.")
-        .timestamp(Timestamp::now())
-        .footer(CreateEmbedFooter::new("Delegatify"))
-        .description(format!("{}\n**...**", queue.join("\n\n")));
-
-    ctx.send(CreateReply::default().embed(embed)).await?;
-    Ok(())
-}
-
-/// Add a song to the queue
-#[poise::command(
-    slash_command,
-    user_cooldown = 60,
-    global_cooldown = 30,
-    category = "Playback"
-)]
-pub async fn play(
-    ctx: Context<'_>,
-    #[description = "Either the URL or search query"]
-    #[max_length = 512]
-    input: String,
-) -> Result<(), Error> {
-    if is_frozen(ctx).await {
-        ctx.say("Playback changes are frozen").await?;
-        return Ok(());
-    }
-    if !is_active(ctx).await? {
-        ctx.say("Can't add song; no device running").await?;
-        return Ok(());
-    }
-
-    let id = if input.starts_with("https") && input.contains("track") && input.contains("spotify") {
-        play_url(&input).await?
-    } else {
-        play_search(ctx, input).await?
-    };
-
-    // Lock Client to get response
-    let lock = ctx.data().spotify.read().await;
-    let client = match &*lock {
-        Some(v) => v,
-        None => {
-            error_unauthorized(ctx).await?;
-            return Ok(());
-        }
-    };
-
-    client
-        .add_item_to_queue(PlayableId::Track(id.clone()), None)
-        .await?;
-    drop(lock);
-
-    let track = fetch_track(ctx, id).await?;
-    let embed = CreateEmbed::new()
-        .colour(Colour::DARK_GREEN)
-        .author(CreateEmbedAuthor::new("Added Song To Queue"))
-        .title(format!("{} - {}", track.name, track.artists.join(", ")))
-        .thumbnail(track.image)
-        .field(
-            "Length",
-            format!("{}s", format_delta(track.duration)),
-            false,
-        )
-        .timestamp(Timestamp::now())
-        .footer(
-            CreateEmbedFooter::new(format!("Requested by <@{}>", ctx.author().id))
-                .icon_url(ctx.author().avatar_url().unwrap_or_default()),
-        );
-
-    ctx.send(CreateReply::default().embed(embed)).await?;
-    Ok(())
-}
-
-/// Switch the state of freeze
-#[poise::command(slash_command, owners_only, category = "Utilities")]
-pub async fn freeze(ctx: Context<'_>) -> Result<(), Error> {
-    let mut v = ctx.data().freeze.write().await;
-
-    if *v {
-        *v = false;
-        ctx.say("Disabled Freeze").await?;
-    } else {
-        *v = true;
-        ctx.say("Enabled Freeze").await?;
-    }
-
-    Ok(())
-}
-/// Play the previous track
-#[poise::command(
-    slash_command,
-    user_cooldown = 60,
-    global_cooldown = 30,
-    category = "Playback"
-)]
-pub async fn previous(ctx: Context<'_>) -> Result<(), Error> {
-    if is_frozen(ctx).await {
-        ctx.say("Playback changes are frozen").await?;
-        return Ok(());
-    }
-    if !is_active(ctx).await? {
-        ctx.say("Nothing Playing").await?;
-        return Ok(());
-    }
-
-    // Lock Client to get response
-    let lock = ctx.data().spotify.read().await;
-    let client = match &*lock {
-        Some(v) => v,
-        None => {
-            error_unauthorized(ctx).await?;
-            return Ok(());
-        }
-    };
-
-    client.previous_track(None).await?;
-    ctx.say("Playing Previous Track").await?;
-    drop(lock);
-
-    run_current(ctx).await?;
-    Ok(())
-}
-
-/// Play the next track
-#[poise::command(
-    slash_command,
-    user_cooldown = 60,
-    global_cooldown = 30,
-    category = "Playback"
-)]
-pub async fn next(ctx: Context<'_>) -> Result<(), Error> {
-    if is_frozen(ctx).await {
-        ctx.say("Playback changes are frozen").await?;
-        return Ok(());
-    }
-    if !is_active(ctx).await? {
-        ctx.say("Nothing Playing").await?;
-        return Ok(());
-    }
-
-    // Lock Client to get response
-    let lock = ctx.data().spotify.read().await;
-    let client = match &*lock {
-        Some(v) => v,
-        None => {
-            error_unauthorized(ctx).await?;
-            return Ok(());
-        }
-    };
-
-    client.next_track(None).await?;
-    ctx.say("Playing Previous Track").await?;
-    drop(lock);
-
-    run_current(ctx).await?;
-    Ok(())
-}
-
-#[poise::command(prefix_command, owners_only)]
-pub async fn register(ctx: Context<'_>) -> Result<(), Error> {
-    poise::builtins::register_application_commands_buttons(ctx).await?;
-    Ok(())
-}
-
 /*
         End Commands; Start libs
 */
 
-// Inner command of current
+/// Inner command of current
 async fn run_current(ctx: Context<'_>) -> Result<(), Error> {
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
@@ -319,7 +352,7 @@ async fn run_current(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-// If there is a currently playing song
+/// If there is a currently playing song
 async fn current_playback(
     playback: &CurrentPlaybackContext,
     item: &PlayableItem,
@@ -352,7 +385,7 @@ async fn current_playback(
         .field("Repeat", repeat, true)
 }
 
-// If there is no song playing
+/// If there is no song playing
 async fn current_no_playback(embed: CreateEmbed) -> CreateEmbed {
     // Create Embed
     embed
@@ -363,13 +396,13 @@ async fn current_no_playback(embed: CreateEmbed) -> CreateEmbed {
         .description("Nothing is currently being played ")
 }
 
-// Parse a URL for TrackId
+/// Parse a URL for TrackId
 async fn play_url<'a>(url: &'a str) -> Result<TrackId<'a>, IdError> {
     let id = url.split('/').last().unwrap().split('?').next().unwrap();
     TrackId::from_id(id)
 }
 
-// Use search to confirm song, return TrackId
+/// Use search to confirm song, return TrackId
 async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Error> {
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
@@ -451,6 +484,24 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
     Err("No interaction".into())
 }
 
+/// Checks for whether a playback command should run
+async fn allow_playback(ctx: Context<'_>, min_level: i16) -> Result<bool, Error> {
+    if is_frozen(ctx).await {
+        ctx.say("Playback changes are frozen").await?;
+        return Ok(false);
+    }
+    if !is_active(ctx).await? {
+        ctx.say("Nothing Playing").await?;
+        return Ok(false);
+    }
+    if is_owner(ctx).await {
+        return Ok(true);
+    }
+
+    is_allowed(ctx, min_level).await
+}
+
+/// Returns whether playback is running or not
 async fn is_active(ctx: Context<'_>) -> Result<bool, Error> {
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
@@ -466,6 +517,37 @@ async fn is_active(ctx: Context<'_>) -> Result<bool, Error> {
         Some(_) => Ok(true),
         None => Ok(false),
     }
+}
+
+/// Returns whether the user is authorised or not
+async fn is_allowed(ctx: Context<'_>, min_level: i16) -> Result<bool, Error> {
+    let id = user_to_id(ctx.author().id).await;
+    match db_get_user_permission(&ctx.data().pool, id).await? {
+        Some(level) => {
+            if level < min_level {
+                ctx.say("You don't have permission to run this command")
+                    .await?;
+                return Ok(false);
+            }
+        }
+        None => {
+            ctx.say("You don't have permission to run this command")
+                .await?;
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+/// Checks if user is an owner
+async fn is_owner(ctx: Context<'_>) -> bool {
+    ctx.framework().options.owners.contains(&ctx.author().id)
+}
+
+/// Converts a UserId to i64
+async fn user_to_id(user: UserId) -> i64 {
+    user.to_string().parse::<i64>().unwrap()
 }
 
 /// Error 401 response for discord
