@@ -4,7 +4,7 @@ use std::env;
 
 use anyhow::Context as _;
 use delegatify::{
-    commands::{authenticate, current, freeze, next, play, previous, queue},
+    commands::{authenticate, current, freeze, next, play, previous, queue, register},
     database, Data,
 };
 use poise::serenity_prelude::{ClientBuilder, GatewayIntents, UserId};
@@ -58,6 +58,7 @@ async fn main(
                 next(),
                 freeze(),
                 authenticate(),
+                register(),
             ],
             owners: HashSet::from([UserId::new(dev_user)]),
             ..Default::default()

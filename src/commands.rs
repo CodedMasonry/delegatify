@@ -1,7 +1,8 @@
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
-    self as serenity, Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, Timestamp,
+    self as serenity, Colour, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter,
+    CreateInteractionResponse, Timestamp,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -107,6 +108,11 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
         ));
     }
 
+    if queue.len() == 0 {
+        ctx.say("Nothings in the queue.").await?;
+        return Ok(());
+    }
+
     let embed = CreateEmbed::new()
         .colour(Colour::DARK_GREEN)
         .title("Current Queue")
@@ -134,6 +140,10 @@ pub async fn play(
 ) -> Result<(), Error> {
     if is_frozen(ctx).await {
         ctx.say("Playback changes are frozen").await?;
+        return Ok(());
+    }
+    if !is_active(ctx).await? {
+        ctx.say("Can't add song; no device running").await?;
         return Ok(());
     }
 
@@ -206,6 +216,10 @@ pub async fn previous(ctx: Context<'_>) -> Result<(), Error> {
         ctx.say("Playback changes are frozen").await?;
         return Ok(());
     }
+    if !is_active(ctx).await? {
+        ctx.say("Nothing Playing").await?;
+        return Ok(());
+    }
 
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
@@ -237,6 +251,10 @@ pub async fn next(ctx: Context<'_>) -> Result<(), Error> {
         ctx.say("Playback changes are frozen").await?;
         return Ok(());
     }
+    if !is_active(ctx).await? {
+        ctx.say("Nothing Playing").await?;
+        return Ok(());
+    }
 
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
@@ -255,6 +273,16 @@ pub async fn next(ctx: Context<'_>) -> Result<(), Error> {
     run_current(ctx).await?;
     Ok(())
 }
+
+#[poise::command(prefix_command, owners_only)]
+pub async fn register(ctx: Context<'_>) -> Result<(), Error> {
+    poise::builtins::register_application_commands_buttons(ctx).await?;
+    Ok(())
+}
+
+/*
+        End Commands; Start libs
+*/
 
 // Inner command of current
 async fn run_current(ctx: Context<'_>) -> Result<(), Error> {
@@ -324,10 +352,6 @@ async fn current_playback(
         .field("Repeat", repeat, true)
 }
 
-/*
-        End Commands
-*/
-
 // If there is no song playing
 async fn current_no_playback(embed: CreateEmbed) -> CreateEmbed {
     // Create Embed
@@ -346,7 +370,7 @@ async fn play_url<'a>(url: &'a str) -> Result<TrackId<'a>, IdError> {
 }
 
 // Use search to confirm song, return TrackId
-async fn play_search<'a>(ctx: Context<'_>, input: String) -> Result<TrackId<'a>, Error> {
+async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Error> {
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
     let client = match &*lock {
@@ -402,22 +426,46 @@ async fn play_search<'a>(ctx: Context<'_>, input: String) -> Result<TrackId<'a>,
             )
             .components(components)
     };
-
     ctx.send(reply).await?;
+
+    info!("Search ID: {}", id.clone());
 
     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
         .timeout(std::time::Duration::from_secs(120))
+        .author_id(ctx.author().id)
         .filter(move |mci| mci.data.custom_id == "accept" || mci.data.custom_id == "cancel")
         .await
     {
+        // Tell discord we got the interaction
+        mci.create_response(ctx.http(), CreateInteractionResponse::Acknowledge)
+            .await?;
+
         if mci.data.custom_id == "accept" {
+            info!("Adding song {}", id);
             return Ok(id);
         } else {
             return Err("Cancelled Interaction".into());
         }
     }
 
-    Err("Failed to handle interactions".into())
+    Err("No interaction".into())
+}
+
+async fn is_active(ctx: Context<'_>) -> Result<bool, Error> {
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(false);
+        }
+    };
+
+    match client.current_playing(None, None::<Vec<_>>).await? {
+        Some(_) => Ok(true),
+        None => Ok(false),
+    }
 }
 
 /// Error 401 response for discord
