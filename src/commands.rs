@@ -2,8 +2,9 @@ use crate::database::{db_add_user, db_get_user_permission, db_remove_user, db_us
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
-    self as serenity, ButtonStyle, Colour, CreateActionRow,
-    CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, Timestamp, UserId,
+    self as serenity, ButtonStyle, Colour, ComponentInteractionDataKind, CreateActionRow,
+    CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse,
+    CreateSelectMenu, CreateSelectMenuOption, EmojiId, ReactionType, Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -76,7 +77,7 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
         ));
     }
 
-    if queue.is_empty() {
+    if queue.len() == 0 {
         ctx.say("Nothings in the queue.").await?;
         return Ok(());
     }
@@ -350,7 +351,7 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
                 .map_err(|err| format!("Failed to Authenticate:\n{err}"))?;
             debug!("Requested Token");
 
-            ctx.reply("Successfully Authenticated!".to_string()).await?;
+            ctx.reply(format!("Successfully Authenticated!")).await?;
 
             *ctx.data().spotify.write().await = Some(spotify.clone());
         } else {
@@ -485,20 +486,25 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
 
     // Make a reply
     let reply = {
-        let components = vec![CreateActionRow::Buttons(vec![
-            CreateButton::new("1")
+        let components = vec![
+            CreateActionRow::Buttons(vec![CreateButton::new("1")
                 .label(options.pop().unwrap())
-                .style(ButtonStyle::Primary),
-            CreateButton::new("2")
+                .style(ButtonStyle::Primary)]),
+            CreateActionRow::Buttons(vec![CreateButton::new("2")
                 .label(options.pop().unwrap())
-                .style(ButtonStyle::Secondary),
-            CreateButton::new("3")
+                .style(ButtonStyle::Secondary)]),
+            CreateActionRow::Buttons(vec![CreateButton::new("3")
                 .label(options.pop().unwrap())
-                .style(ButtonStyle::Secondary),
-            CreateButton::new("cancel")
+                .style(ButtonStyle::Secondary)]),
+            CreateActionRow::Buttons(vec![CreateButton::new("cancel")
                 .label("Cancel")
-                .style(ButtonStyle::Danger),
-        ])];
+                .emoji(ReactionType::Custom {
+                    animated: false,
+                    id: EmojiId::new(1305359341540343858),
+                    name: None,
+                })
+                .style(ButtonStyle::Danger)]),
+        ];
 
         poise::CreateReply::default()
             .content("Choose A Song To Play")
@@ -511,9 +517,10 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
         .timeout(std::time::Duration::from_secs(120))
         .author_id(ctx.author().id)
         .custom_ids(vec![
-            "accept".to_string(),
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
             "cancel".to_string(),
-            "song".to_string(),
         ])
         .await
     {
@@ -522,7 +529,7 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
             .await?;
         match mci.data.custom_id.as_str() {
             "1" => {
-                let id = data.first().unwrap().get_track_id().unwrap();
+                let id = data.get(0).unwrap().get_track_id().unwrap();
                 return Ok(id.clone_static());
             }
             "2" => {
