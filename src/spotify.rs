@@ -39,7 +39,7 @@ impl StandardItem<'_> {
     }
 
     pub fn get_title(&self) -> String {
-        format!("Playing: {} - {}", self.name, self.artists.join(", "))
+        format!("{} - {}", self.name, self.artists.join(", "))
     }
 
     pub fn get_track_id(&self) -> Option<TrackId<'_>> {

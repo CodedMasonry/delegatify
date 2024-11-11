@@ -423,7 +423,7 @@ async fn current_playback(
         .color(Colour::DARK_GREEN)
         .timestamp(Timestamp::now())
         .footer(CreateEmbedFooter::new(format!(
-            "Playing On {}",
+            "Playing on {}",
             playback.device.name
         )))
         .author(CreateEmbedAuthor::new("Currently Playing..."))
