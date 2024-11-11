@@ -90,10 +90,12 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
                 current.name,
                 current.artists.join(", ")
             ))
-            .url(current.url),
+            .url(current.url)
+            .icon_url("https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Primary_Logo_RGB_Green.png"),
         )
         .title("Current Queue")
         .description("The next five songs that are in the queue.")
+        .thumbnail(current.image)
         .timestamp(Timestamp::now())
         .footer(CreateEmbedFooter::new("Delegatify"))
         .description(format!("{}\n**...**", queue.join("\n\n")));
