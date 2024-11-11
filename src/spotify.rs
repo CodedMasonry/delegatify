@@ -1,6 +1,6 @@
 use chrono::TimeDelta;
 use rspotify::{
-    model::{FullEpisode, FullTrack, PlayableItem, TrackId},
+    model::{EpisodeId, FullEpisode, FullTrack, PlayableItem, TrackId},
     prelude::{BaseClient, OAuthClient},
     scopes, AuthCodePkceSpotify, OAuth,
 };
@@ -8,13 +8,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Context, Error};
 
-pub struct StandardItem {
+pub enum ItemId<'a> {
+    Track(TrackId<'a>),
+    Episode(EpisodeId<'a>),
+}
+
+pub struct StandardItem<'a> {
     pub name: String,
     pub duration: TimeDelta,
     pub artists: Vec<String>,
     pub image: String,
     pub url: String,
-    pub id: String,
+    pub id: ItemId<'a>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -25,8 +30,8 @@ pub struct PlaybackStateResponse {
     pub currently_playing_type: String,
 }
 
-impl StandardItem {
-    pub fn parse(item: &PlayableItem) -> StandardItem {
+impl StandardItem<'_> {
+    pub fn parse<'a>(item: PlayableItem) -> StandardItem<'a> {
         match item {
             PlayableItem::Track(track) => handle_track_current(track),
             PlayableItem::Episode(episode) => handle_episode_current(episode),
@@ -57,7 +62,7 @@ pub async fn init() -> Result<rspotify::AuthCodePkceSpotify, Error> {
     ))
 }
 
-pub async fn fetch_queue(ctx: Context<'_>) -> Result<Vec<StandardItem>, Error> {
+pub async fn fetch_queue(ctx: Context<'_>) -> Result<Vec<StandardItem<'_>>, Error> {
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
     let client = match &*lock {
@@ -73,14 +78,17 @@ pub async fn fetch_queue(ctx: Context<'_>) -> Result<Vec<StandardItem>, Error> {
 
     let mut queue = Vec::new();
     for item in data {
-        let value = StandardItem::parse(&item);
+        let value = StandardItem::parse(item);
         queue.push(value);
     }
 
     Ok(queue)
 }
 
-pub async fn fetch_track(ctx: Context<'_>, track: TrackId<'_>) -> Result<StandardItem, Error> {
+pub async fn fetch_track<'a>(
+    ctx: Context<'_>,
+    track: TrackId<'_>,
+) -> Result<StandardItem<'a>, Error> {
     // Lock Client to get response
     let lock = ctx.data().spotify.read().await;
     let client = match &*lock {
@@ -94,11 +102,11 @@ pub async fn fetch_track(ctx: Context<'_>, track: TrackId<'_>) -> Result<Standar
     // Free client lock
     drop(lock);
 
-    let data = StandardItem::parse(&PlayableItem::Track(data));
+    let data = StandardItem::parse(PlayableItem::Track(data));
     Ok(data)
 }
 
-pub fn handle_track_current(track: &FullTrack) -> StandardItem {
+pub fn handle_track_current<'a>(track: FullTrack) -> StandardItem<'a> {
     let image = match track.album.images.get(0) {
         Some(v) => v.url.clone(),
         None => String::new(),
@@ -116,11 +124,11 @@ pub fn handle_track_current(track: &FullTrack) -> StandardItem {
         artists,
         image,
         url,
-        id: track.id.clone().unwrap().to_string(),
+        id: ItemId::Track(track.id.unwrap()),
     }
 }
 
-pub fn handle_episode_current(track: &FullEpisode) -> StandardItem {
+pub fn handle_episode_current<'a>(track: FullEpisode) -> StandardItem<'a> {
     let image = match track.images.get(0) {
         Some(v) => v.url.clone(),
         None => String::new(),
@@ -133,6 +141,6 @@ pub fn handle_episode_current(track: &FullEpisode) -> StandardItem {
         artists: vec![track.show.name.clone()],
         image,
         url,
-        id: track.id.to_string(),
+        id: ItemId::Episode(track.id),
     }
 }

@@ -39,9 +39,28 @@ pub async fn current(ctx: Context<'_>) -> Result<(), Error> {
 /// Check the queue
 #[poise::command(slash_command, user_cooldown = 10, category = "Playback")]
 pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
-    // Show the current above the queue
-    run_current(ctx).await?;
+    // Lock Client to get response
+    let lock = ctx.data().spotify.read().await;
+    let client = match &*lock {
+        Some(v) => v,
+        None => {
+            error_unauthorized(ctx).await?;
+            return Ok(());
+        }
+    };
 
+    // The current playing song
+    let current = match client.current_playing(None, None::<Vec<_>>).await? {
+        Some(v) => StandardItem::parse(v.item.unwrap()),
+        None => {
+            let embed = current_no_playback(CreateEmbed::default()).await;
+            ctx.send(CreateReply::default().embed(embed)).await?;
+            return Ok(());
+        }
+    };
+    drop(lock);
+
+    // The queue
     let data = fetch_queue(ctx).await?;
     let mut queue = Vec::new();
     for (index, value) in data.into_iter().enumerate() {
@@ -65,6 +84,14 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
 
     let embed = CreateEmbed::new()
         .colour(Colour::DARK_GREEN)
+        .author(
+            CreateEmbedAuthor::new(format!(
+                "Currenting Playing: {} - {}",
+                current.name,
+                current.artists.join(", ")
+            ))
+            .url(current.url),
+        )
         .title("Current Queue")
         .description("The next five songs that are in the queue.")
         .timestamp(Timestamp::now())
@@ -274,9 +301,6 @@ pub async fn remove_user(
 /// Authenticates the application with specified token
 #[poise::command(slash_command, owners_only, category = "Utilities")]
 pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
-    // Uncomment for debug
-    // poise::builtins::register_application_commands_buttons(ctx).await?;
-
     let mut spotify = spotify::init().await?;
     let url = spotify.get_authorize_url(None).unwrap();
 
@@ -366,7 +390,7 @@ async fn run_current(ctx: Context<'_>) -> Result<(), Error> {
 
     // Check if something is actually playing
     let embed = match &playback.item {
-        Some(item) => current_playback(&playback, item, embed).await,
+        Some(item) => current_playback(&playback, item.clone(), embed).await,
         None => current_no_playback(embed).await,
     };
 
@@ -377,7 +401,7 @@ async fn run_current(ctx: Context<'_>) -> Result<(), Error> {
 /// If there is a currently playing song
 async fn current_playback(
     playback: &CurrentPlaybackContext,
-    item: &PlayableItem,
+    item: PlayableItem,
     embed: CreateEmbed,
 ) -> CreateEmbed {
     let item = StandardItem::parse(item);
@@ -446,7 +470,7 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
     let mut data = Vec::new();
     if let SearchResult::Tracks(page) = search_result {
         for item in page.items {
-            let item = StandardItem::parse(&PlayableItem::Track(item));
+            let item = StandardItem::parse(PlayableItem::Track(item));
             data.push(item);
         }
     } else {
@@ -455,10 +479,10 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
 
     // Make items into select menu options
     let mut options = Vec::new();
-    for value in data.into_iter() {
+    for (index, value) in data.iter().enumerate() {
         let option = CreateSelectMenuOption::new(
-            format!("**{}** -- {}", value.name, value.artists.join(", "),),
-            value.id,
+            format!("{} - {}", value.name, value.artists.join(", "),),
+            index.to_string(),
         );
 
         options.push(option);
@@ -487,19 +511,13 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
         ];
 
         poise::CreateReply::default()
-            .embed(
-                CreateEmbed::new()
-                    .color(Colour::BLUE)
-                    .timestamp(Timestamp::now())
-                    .title("Search Results")
-                    .footer(CreateEmbedFooter::new("Delegatify")),
-            )
+            .content("Choose A Song To Play")
             .components(components)
     };
     ctx.send(reply).await?;
 
     // Sort component interactions
-    let mut selected: Option<String> = None;
+    let mut selected: Option<usize> = None;
     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
         .timeout(std::time::Duration::from_secs(120))
         .author_id(ctx.author().id)
@@ -518,7 +536,10 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
             "accept" => {
                 // If a song has been selected
                 if let Some(id) = selected {
-                    return Ok(TrackId::from_id(id)?);
+                    match &data.get(id).unwrap().id {
+                        spotify::ItemId::Track(track_id) => return Ok(track_id.clone()),
+                        _ => todo!(),
+                    };
                 } else {
                     ctx.say("Please select a song, or press cancel").await?;
                 }
@@ -530,7 +551,7 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
             // If the select menu was chosen
             "song" => {
                 if let ComponentInteractionDataKind::StringSelect { values } = mci.data.kind {
-                    selected = Some(values.first().unwrap().clone())
+                    selected = Some(values.first().unwrap().parse()?)
                 } else {
                     panic!("Not possible")
                 }
