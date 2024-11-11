@@ -138,7 +138,7 @@ pub async fn play(
     drop(lock);
 
     let track = fetch_track(ctx, id).await?;
-    let title = format!("{} - {}", track.name, track.artists.join(", "));
+    let title = track.get_title();
     let embed = CreateEmbed::new()
         .colour(Colour::DARK_GREEN)
         .author(CreateEmbedAuthor::new("Added Song To Queue"))
@@ -427,7 +427,7 @@ async fn current_playback(
             playback.device.name
         )))
         .author(CreateEmbedAuthor::new("Currently Playing..."))
-        .title(format!("{} - {}", item.name, item.artists.join(", ")))
+        .title(item.get_title())
         .thumbnail(item.image)
         .field("Time", duration, false)
         .field("Shuffle", shuffle, true)
