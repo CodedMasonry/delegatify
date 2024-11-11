@@ -14,6 +14,7 @@ pub struct StandardItem {
     pub artists: Vec<String>,
     pub image: String,
     pub url: String,
+    pub id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -25,10 +26,10 @@ pub struct PlaybackStateResponse {
 }
 
 impl StandardItem {
-    pub async fn parse(item: &PlayableItem) -> StandardItem {
+    pub fn parse(item: &PlayableItem) -> StandardItem {
         match item {
-            PlayableItem::Track(track) => handle_track_current(track).await,
-            PlayableItem::Episode(episode) => handle_episode_current(episode).await,
+            PlayableItem::Track(track) => handle_track_current(track),
+            PlayableItem::Episode(episode) => handle_episode_current(episode),
         }
     }
 }
@@ -72,7 +73,7 @@ pub async fn fetch_queue(ctx: Context<'_>) -> Result<Vec<StandardItem>, Error> {
 
     let mut queue = Vec::new();
     for item in data {
-        let value = StandardItem::parse(&item).await;
+        let value = StandardItem::parse(&item);
         queue.push(value);
     }
 
@@ -93,11 +94,11 @@ pub async fn fetch_track(ctx: Context<'_>, track: TrackId<'_>) -> Result<Standar
     // Free client lock
     drop(lock);
 
-    let data = StandardItem::parse(&PlayableItem::Track(data)).await;
+    let data = StandardItem::parse(&PlayableItem::Track(data));
     Ok(data)
 }
 
-pub async fn handle_track_current(track: &FullTrack) -> StandardItem {
+pub fn handle_track_current(track: &FullTrack) -> StandardItem {
     let image = match track.album.images.get(0) {
         Some(v) => v.url.clone(),
         None => String::new(),
@@ -115,10 +116,11 @@ pub async fn handle_track_current(track: &FullTrack) -> StandardItem {
         artists,
         image,
         url,
+        id: track.id.clone().unwrap().to_string(),
     }
 }
 
-pub async fn handle_episode_current(track: &FullEpisode) -> StandardItem {
+pub fn handle_episode_current(track: &FullEpisode) -> StandardItem {
     let image = match track.images.get(0) {
         Some(v) => v.url.clone(),
         None => String::new(),
@@ -131,5 +133,6 @@ pub async fn handle_episode_current(track: &FullEpisode) -> StandardItem {
         artists: vec![track.show.name.clone()],
         image,
         url,
+        id: track.id.to_string(),
     }
 }

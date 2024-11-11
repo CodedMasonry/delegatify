@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 #[deny(clippy::all)]
 use std::env;
 
@@ -7,7 +6,7 @@ use delegatify::{
     commands::{add_user, authenticate, current, freeze, next, play, previous, queue, remove_user},
     database, Data,
 };
-use poise::serenity_prelude::{ClientBuilder, GatewayIntents, UserId};
+use poise::serenity_prelude::{ClientBuilder, GatewayIntents};
 use shuttle_runtime::SecretStore;
 use shuttle_serenity::ShuttleSerenity;
 use tokio::sync::RwLock;
