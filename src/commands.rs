@@ -3,8 +3,7 @@ use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
     self as serenity, ButtonStyle, Colour, CreateActionRow, CreateButton, CreateEmbed,
-    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse,
-    Timestamp, UserId,
+    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -462,7 +461,7 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
     };
 
     let search_result = client
-        .search(&input, SearchType::Track, None, None, Some(3), None)
+        .search(&input, SearchType::Track, None, None, Some(5), None)
         .await?;
     // Free client
     drop(lock);
@@ -472,27 +471,35 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
     if let SearchResult::Tracks(page) = search_result {
         for item in page.items {
             let item = StandardItem::parse(PlayableItem::Track(item));
-
-            data.push(item);
+            // Ignore already known tracks with the same exact title
+            if !data
+                .iter()
+                .any(|existing: &StandardItem<'_>| existing.get_title() == item.get_title())
+            {
+                data.push(item)
+            }
         }
     } else {
         panic!("Not Possible");
     }
-
-    // Format results into digestible titles
-    let options: Vec<String> = data.iter().map(|v| v.get_title()).collect();
 
     // Make a reply
     let reply = {
         let mut components = vec![];
 
         // Add buttons so custom id is equal to index; allows accsesing data via index
-        for (index, value) in options.into_iter().enumerate() {
+        // Take only 3 songs at most; there's guaranteed to be at least 1
+        for (index, song) in data.iter().enumerate().take(3) {
+            let style = if index == 0 {
+                ButtonStyle::Primary
+            } else {
+                ButtonStyle::Secondary
+            };
             components.push(CreateActionRow::Buttons(vec![CreateButton::new(
                 index.to_string(),
             )
-            .label(value)
-            .style(ButtonStyle::Danger)]));
+            .label(song.get_title())
+            .style(style)]));
         }
 
         // Make cancel last
