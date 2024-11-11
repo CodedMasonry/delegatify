@@ -2,9 +2,9 @@ use crate::database::{db_add_user, db_get_user_permission, db_remove_user, db_us
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
-    self as serenity, ButtonStyle, Colour, ComponentInteractionDataKind, CreateActionRow,
-    CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse,
-    CreateSelectMenu, CreateSelectMenuOption, EmojiId, ReactionType, Timestamp, UserId,
+    self as serenity, ButtonStyle, Colour, CreateActionRow, CreateButton, CreateEmbed,
+    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, EmojiId, ReactionType,
+    Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -326,7 +326,8 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
                     "In order for the application to work, a spotify account must be connected",
             )
             .field("Open URL Button", "This button opens a link to recieve an authentication code. When you recieve the code, click on the Authenticate button.", false)
-            .field("Authenticate Button", "This is the button you click when you have the code. It will ask you to input the code, and then you are good to go.", false))
+            .field("Authenticate Button", "This is the button you click when you have the code. It will ask you to input the code, and then you are good to go.", false)
+            .footer(CreateEmbedFooter::new(format!("Version: {}", env!("CARGO_PKG_VERSION")))))
             .components(components)
     };
 
