@@ -37,6 +37,14 @@ impl StandardItem<'_> {
             PlayableItem::Episode(episode) => handle_episode_current(episode),
         }
     }
+
+    pub fn get_track_id(&self) -> Option<TrackId<'_>> {
+        if let ItemId::Track(v) = &self.id {
+            Some(v.clone())
+        } else {
+            None
+        }
+    }
 }
 
 pub async fn init() -> Result<rspotify::AuthCodePkceSpotify, Error> {

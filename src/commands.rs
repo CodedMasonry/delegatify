@@ -2,9 +2,9 @@ use crate::database::{db_add_user, db_get_user_permission, db_remove_user, db_us
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
-    self as serenity, Colour, ComponentInteractionDataKind, CreateEmbed, CreateEmbedAuthor,
-    CreateEmbedFooter, CreateInteractionResponse, CreateSelectMenu, CreateSelectMenuOption,
-    Timestamp, UserId,
+    self as serenity, ButtonStyle, Colour, ComponentInteractionDataKind, CreateActionRow,
+    CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse,
+    CreateSelectMenu, CreateSelectMenuOption, Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -86,7 +86,7 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
         .colour(Colour::DARK_GREEN)
         .author(
             CreateEmbedAuthor::new(format!(
-                "Currenting Playing: {} - {}",
+                "Playing: {} - {}",
                 current.name,
                 current.artists.join(", ")
             ))
@@ -463,7 +463,7 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
     };
 
     let search_result = client
-        .search(&input, SearchType::Track, None, None, Some(5), None)
+        .search(&input, SearchType::Track, None, None, Some(3), None)
         .await?;
     // Free client
     drop(lock);
@@ -479,38 +479,27 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
         panic!("Not Possible");
     }
 
-    // Make items into select menu options
-    let mut options = Vec::new();
-    for (index, value) in data.iter().enumerate() {
-        let option = CreateSelectMenuOption::new(
-            format!("{} - {}", value.name, value.artists.join(", "),),
-            index.to_string(),
-        );
-
-        options.push(option);
-    }
+    let mut options: Vec<String> = data
+        .iter()
+        .map(|v| format!("{} - {}", v.name, v.artists.join(", ")))
+        .collect();
 
     // Make a reply
     let reply = {
-        let components = vec![
-            serenity::CreateActionRow::SelectMenu(
-                CreateSelectMenu::new(
-                    "song",
-                    serenity::CreateSelectMenuKind::String { options: options },
-                )
-                .placeholder("Choose An Option")
-                .min_values(1)
-                .max_values(1),
-            ),
-            serenity::CreateActionRow::Buttons(vec![
-                serenity::CreateButton::new("accept")
-                    .label("Add")
-                    .style(poise::serenity_prelude::ButtonStyle::Success),
-                serenity::CreateButton::new("cancel")
-                    .label("Cancel")
-                    .style(poise::serenity_prelude::ButtonStyle::Danger),
-            ]),
-        ];
+        let components = vec![CreateActionRow::Buttons(vec![
+            CreateButton::new("1")
+                .label(options.pop().unwrap())
+                .style(ButtonStyle::Primary),
+            CreateButton::new("2")
+                .label(options.pop().unwrap())
+                .style(ButtonStyle::Secondary),
+            CreateButton::new("3")
+                .label(options.pop().unwrap())
+                .style(ButtonStyle::Secondary),
+            CreateButton::new("cancel")
+                .label("Cancel")
+                .style(ButtonStyle::Danger),
+        ])];
 
         poise::CreateReply::default()
             .content("Choose A Song To Play")
@@ -519,7 +508,6 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
     ctx.send(reply).await?;
 
     // Sort component interactions
-    let mut selected: Option<usize> = None;
     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
         .timeout(std::time::Duration::from_secs(120))
         .author_id(ctx.author().id)
@@ -534,29 +522,21 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
         mci.create_response(ctx.http(), CreateInteractionResponse::Acknowledge)
             .await?;
         match mci.data.custom_id.as_str() {
-            // If the button is accept
-            "accept" => {
-                // If a song has been selected
-                if let Some(id) = selected {
-                    match &data.get(id).unwrap().id {
-                        spotify::ItemId::Track(track_id) => return Ok(track_id.clone()),
-                        _ => todo!(),
-                    };
-                } else {
-                    ctx.say("Please select a song, or press cancel").await?;
-                }
+            "1" => {
+                let id = data.get(0).unwrap().get_track_id().unwrap();
+                return Ok(id.clone_static());
+            }
+            "2" => {
+                let id = data.get(1).unwrap().get_track_id().unwrap();
+                return Ok(id.clone_static());
+            }
+            "3" => {
+                let id = data.get(2).unwrap().get_track_id().unwrap();
+                return Ok(id.clone_static());
             }
             // If the button is cancel
             "cancel" => {
                 return Err("Cancelled Interaction".into());
-            }
-            // If the select menu was chosen
-            "song" => {
-                if let ComponentInteractionDataKind::StringSelect { values } = mci.data.kind {
-                    selected = Some(values.first().unwrap().parse()?)
-                } else {
-                    panic!("Not possible")
-                }
             }
             // Don't know what it is, so continue
             _ => continue,
