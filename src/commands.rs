@@ -3,8 +3,7 @@ use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
     self as serenity, ButtonStyle, Colour, CreateActionRow, CreateButton, CreateEmbed,
-    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse,
-    Timestamp, UserId,
+    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -423,7 +422,10 @@ async fn current_playback(
     embed
         .color(Colour::DARK_GREEN)
         .timestamp(Timestamp::now())
-        .footer(CreateEmbedFooter::new("Delegatify"))
+        .footer(CreateEmbedFooter::new(format!(
+            "Playing On {}",
+            playback.device.name
+        )))
         .author(CreateEmbedAuthor::new("Currently Playing..."))
         .title(format!("{} - {}", item.name, item.artists.join(", ")))
         .thumbnail(item.image)
