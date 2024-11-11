@@ -3,7 +3,7 @@ use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
     self as serenity, ButtonStyle, Colour, CreateActionRow, CreateButton, CreateEmbed,
-    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, EmojiId, ReactionType,
+    CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse,
     Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
@@ -85,11 +85,7 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
     let embed = CreateEmbed::new()
         .colour(Colour::DARK_GREEN)
         .author(
-            CreateEmbedAuthor::new(format!(
-                "Playing: {} - {}",
-                current.name,
-                current.artists.join(", ")
-            ))
+            CreateEmbedAuthor::new(current.get_title())
             .url(current.url)
             .icon_url("https://storage.googleapis.com/pr-newsroom-wp/1/2023/05/Spotify_Primary_Logo_RGB_Green.png"),
         )
@@ -335,6 +331,8 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
 
     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
         .timeout(std::time::Duration::from_secs(120))
+        .author_id(ctx.author().id)
+        .channel_id(ctx.channel_id())
         .filter(move |mci| mci.data.custom_id == "open_modal")
         .await
     {
@@ -474,79 +472,61 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
     if let SearchResult::Tracks(page) = search_result {
         for item in page.items {
             let item = StandardItem::parse(PlayableItem::Track(item));
+
             data.push(item);
         }
     } else {
         panic!("Not Possible");
     }
 
-    let mut options: Vec<String> = data
-        .iter()
-        .map(|v| format!("{} - {}", v.name, v.artists.join(", ")))
-        .collect();
+    // Format results into digestible titles
+    let options: Vec<String> = data.iter().map(|v| v.get_title()).collect();
 
     // Make a reply
     let reply = {
-        let components = vec![
-            CreateActionRow::Buttons(vec![CreateButton::new("1")
-                .label(options.pop().unwrap())
-                .style(ButtonStyle::Primary)]),
-            CreateActionRow::Buttons(vec![CreateButton::new("2")
-                .label(options.pop().unwrap())
-                .style(ButtonStyle::Secondary)]),
-            CreateActionRow::Buttons(vec![CreateButton::new("3")
-                .label(options.pop().unwrap())
-                .style(ButtonStyle::Secondary)]),
-            CreateActionRow::Buttons(vec![CreateButton::new("cancel")
-                .label("Cancel")
-                .emoji(ReactionType::Custom {
-                    animated: false,
-                    id: EmojiId::new(1305359341540343858),
-                    name: None,
-                })
-                .style(ButtonStyle::Danger)]),
-        ];
+        let mut components = vec![];
 
+        // Add buttons so custom id is equal to index; allows accsesing data via index
+        for (index, value) in options.into_iter().enumerate() {
+            components.push(CreateActionRow::Buttons(vec![CreateButton::new(
+                index.to_string(),
+            )
+            .label(value)
+            .style(ButtonStyle::Danger)]));
+        }
+
+        // Make cancel last
+        components.push(CreateActionRow::Buttons(vec![CreateButton::new("cancel")
+            .label("Cancel")
+            .style(ButtonStyle::Danger)]));
+
+        // Create the reply
         poise::CreateReply::default()
             .content("Choose A Song To Play")
             .components(components)
     };
     ctx.send(reply).await?;
 
-    // Sort component interactions
+    // Sort component interactions; Trys to convert id to int to classify it as s button
     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
         .timeout(std::time::Duration::from_secs(120))
         .author_id(ctx.author().id)
-        .custom_ids(vec![
-            "1".to_string(),
-            "2".to_string(),
-            "3".to_string(),
-            "cancel".to_string(),
-        ])
+        .filter(|v| v.data.custom_id == "cancel" || v.data.custom_id.parse::<u8>().is_ok())
         .await
     {
         // Tell discord we got the interaction
         mci.create_response(ctx.http(), CreateInteractionResponse::Acknowledge)
             .await?;
         match mci.data.custom_id.as_str() {
-            "1" => {
-                let id = data.get(0).unwrap().get_track_id().unwrap();
-                return Ok(id.clone_static());
-            }
-            "2" => {
-                let id = data.get(1).unwrap().get_track_id().unwrap();
-                return Ok(id.clone_static());
-            }
-            "3" => {
-                let id = data.get(2).unwrap().get_track_id().unwrap();
-                return Ok(id.clone_static());
-            }
             // If the button is cancel
             "cancel" => {
                 return Err("Cancelled Interaction".into());
             }
-            // Don't know what it is, so continue
-            _ => continue,
+            // If it is another item
+            id => {
+                let parsed = id.parse::<usize>()?;
+                return Ok(data[parsed].get_track_id().unwrap().clone_static());
+            }
         }
     }
 

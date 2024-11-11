@@ -38,6 +38,10 @@ impl StandardItem<'_> {
         }
     }
 
+    pub fn get_title(&self) -> String {
+        format!("Playing: {} - {}", self.name, self.artists.join(", "))
+    }
+
     pub fn get_track_id(&self) -> Option<TrackId<'_>> {
         if let ItemId::Track(v) = &self.id {
             Some(v.clone())
