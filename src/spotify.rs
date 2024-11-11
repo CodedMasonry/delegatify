@@ -115,7 +115,7 @@ pub async fn fetch_track<'a>(
 }
 
 pub fn handle_track_current<'a>(track: FullTrack) -> StandardItem<'a> {
-    let image = match track.album.images.get(0) {
+    let image = match track.album.images.first() {
         Some(v) => v.url.clone(),
         None => String::new(),
     };
@@ -128,7 +128,7 @@ pub fn handle_track_current<'a>(track: FullTrack) -> StandardItem<'a> {
 
     StandardItem {
         name: track.name.clone(),
-        duration: track.duration.clone(),
+        duration: track.duration,
         artists,
         image,
         url,
@@ -137,7 +137,7 @@ pub fn handle_track_current<'a>(track: FullTrack) -> StandardItem<'a> {
 }
 
 pub fn handle_episode_current<'a>(track: FullEpisode) -> StandardItem<'a> {
-    let image = match track.images.get(0) {
+    let image = match track.images.first() {
         Some(v) => v.url.clone(),
         None => String::new(),
     };
@@ -145,7 +145,7 @@ pub fn handle_episode_current<'a>(track: FullEpisode) -> StandardItem<'a> {
 
     StandardItem {
         name: track.name.clone(),
-        duration: track.duration.clone(),
+        duration: track.duration,
         artists: vec![track.show.name.clone()],
         image,
         url,

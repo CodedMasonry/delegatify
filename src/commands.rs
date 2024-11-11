@@ -2,9 +2,8 @@ use crate::database::{db_add_user, db_get_user_permission, db_remove_user, db_us
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
 use poise::serenity_prelude::{
-    self as serenity, ButtonStyle, Colour, ComponentInteractionDataKind, CreateActionRow,
-    CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse,
-    CreateSelectMenu, CreateSelectMenuOption, Timestamp, UserId,
+    self as serenity, ButtonStyle, Colour, CreateActionRow,
+    CreateButton, CreateEmbed, CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, Timestamp, UserId,
 };
 use poise::{CreateReply, Modal};
 use rspotify::model::{
@@ -77,7 +76,7 @@ pub async fn queue(ctx: Context<'_>) -> Result<(), Error> {
         ));
     }
 
-    if queue.len() == 0 {
+    if queue.is_empty() {
         ctx.say("Nothings in the queue.").await?;
         return Ok(());
     }
@@ -351,7 +350,7 @@ pub async fn authenticate(ctx: Context<'_>) -> Result<(), Error> {
                 .map_err(|err| format!("Failed to Authenticate:\n{err}"))?;
             debug!("Requested Token");
 
-            ctx.reply(format!("Successfully Authenticated!")).await?;
+            ctx.reply("Successfully Authenticated!".to_string()).await?;
 
             *ctx.data().spotify.write().await = Some(spotify.clone());
         } else {
@@ -523,7 +522,7 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
             .await?;
         match mci.data.custom_id.as_str() {
             "1" => {
-                let id = data.get(0).unwrap().get_track_id().unwrap();
+                let id = data.first().unwrap().get_track_id().unwrap();
                 return Ok(id.clone_static());
             }
             "2" => {

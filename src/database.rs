@@ -25,10 +25,7 @@ pub async fn db_add_user(
     user_id: i64,
     level: Option<i16>,
 ) -> Result<(), Error> {
-    let level = match level {
-        Some(v) => v,
-        None => 1,
-    };
+    let level = level.unwrap_or(1);
     let mut tx = pool.begin().await?;
 
     sqlx::query("INSERT INTO users (id, permission) VALUES ($1, $2)")
