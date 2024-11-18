@@ -1,6 +1,7 @@
 use crate::database::{db_add_user, db_get_user_permission, db_remove_user, db_user_exists};
 use crate::spotify::{fetch_queue, fetch_track, StandardItem};
 use crate::{format_delta, is_frozen, spotify, Context, Error};
+use anyhow::Context as _;
 use poise::serenity_prelude::{
     self as serenity, ButtonStyle, Colour, CreateActionRow, CreateButton, CreateEmbed,
     CreateEmbedAuthor, CreateEmbedFooter, CreateInteractionResponse, Timestamp, UserId,
@@ -486,6 +487,10 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
         panic!("Not Possible");
     }
 
+    if data.len() == 0 {
+        return Err("No results were found".into());
+    }
+
     // Make a reply
     let reply = {
         let mut components = vec![];
@@ -515,7 +520,7 @@ async fn play_search(ctx: Context<'_>, input: String) -> Result<TrackId<'_>, Err
             .content("Choose A Song To Play")
             .components(components)
     };
-    ctx.send(reply).await?;
+    ctx.send(reply).await.context("Failed to send message")?;
 
     // Sort component interactions; Trys to convert id to int to classify it as s button
     while let Some(mci) = serenity::ComponentInteractionCollector::new(ctx.serenity_context())
