@@ -39,7 +39,17 @@ impl StandardItem<'_> {
     }
 
     pub fn get_title(&self) -> String {
-        format!("{} - {}", self.name, self.artists.join(", "))
+        let mut str = format!("{} - {}", self.name, self.artists.join(", "));
+        // If title is too long with multiple artists
+        if str.len() >= 80 {
+            str = format!("{} - {}", self.name, self.artists.first().unwrap())
+        }
+        // If title is STILL too long, just do the name
+        if str.len() >= 80 {
+            str = self.name.clone();
+        }
+
+        str
     }
 
     pub fn get_track_id(&self) -> Option<TrackId<'_>> {
